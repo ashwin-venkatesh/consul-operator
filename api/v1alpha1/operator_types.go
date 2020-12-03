@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -18,9 +19,11 @@ import (
 
 // OperatorSpec defines the desired state of Operator
 type OperatorSpec struct {
-	Global GlobalConfig `json:"global,omitempty"`
-	Server ServerConfig `json:"server,omitempty"`
-	Client ClientConfig `json:"client,omitempty"`
+	Global  GlobalConfig  `json:"global,omitempty"`
+	Server  ServerConfig  `json:"server,omitempty"`
+	Client  ClientConfig  `json:"client,omitempty"`
+	Connect ConnectConfig `json:"connect,omitempty"`
+	UI      UIConfig      `json:"ui,omitempty"`
 }
 
 type GlobalConfig struct {
@@ -42,6 +45,16 @@ type ClientConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 }
 
+type UIConfig struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Type    string `json:"type,omitempty"`
+}
+
+type ConnectConfig struct {
+	Enabled      bool `json:"enabled,omitempty"`
+	HealthChecks bool `json:"health,omitempty"`
+}
+
 // OperatorStatus defines the observed state of Operator
 type OperatorStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
@@ -58,14 +71,6 @@ type Operator struct {
 
 	Spec   OperatorSpec   `json:"spec,omitempty"`
 	Status OperatorStatus `json:"status,omitempty"`
-}
-
-func (in *Operator) retryJoinString() string {
-	var retryJoinString []string
-	for i := int32(0); i < in.Spec.Server.Replicas; i++ {
-		retryJoinString = append(retryJoinString, fmt.Sprintf("-retry-join=%s-server-%d.%s-server.%s.svc", in.Name, i, in.Name, in.Namespace))
-	}
-	return strings.Join(retryJoinString, `\ \n`)
 }
 
 func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
@@ -116,7 +121,7 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: "consul-server",
+										Name: fmt.Sprintf("%s-server-config", in.Name),
 									},
 								},
 							},
@@ -213,7 +218,7 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 											"/bin/sh",
 											"-ec",
 											`|
-curl http://127.0.0.1:8500/v1/status/leader \
+curl http://127.0.0.1:8500/admissionv1/status/leader \
 2>/dev/null | grep -E '".+"'`,
 										},
 									},
@@ -341,7 +346,7 @@ func (in *Operator) imagePullSecretsList() []corev1.LocalObjectReference {
 func (in *Operator) ServerConfigMap() *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-server", in.Name),
+			Name:      fmt.Sprintf("%s-server-config", in.Name),
 			Namespace: in.Namespace,
 			Labels: map[string]string{
 				"app":       in.Name,
@@ -501,8 +506,617 @@ func (in *Operator) UIService() *corev1.Service {
 					},
 				},
 			},
-			Type: corev1.ServiceTypeLoadBalancer,
+			Type: in.uiServiceType(),
 		},
+	}
+}
+
+func (in *Operator) ClientServiceAccount() *corev1.ServiceAccount {
+	return &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-client", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		ImagePullSecrets: in.imagePullSecretsList(),
+	}
+}
+
+func (in *Operator) ClientRole() *rbacv1.Role {
+	return &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-client", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		Rules: []rbacv1.PolicyRule{},
+	}
+}
+
+func (in *Operator) ClientRoleBinding() *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-client", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "Role",
+			Name:     fmt.Sprintf("%s-client", in.Name),
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind: rbacv1.ServiceAccountKind,
+				Name: fmt.Sprintf("%s-client", in.Name),
+			},
+		},
+	}
+}
+
+func (in *Operator) ClientConfigMap() *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-client-config", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		Data: map[string]string{
+			"extra-from-values.json": "{}",
+		},
+	}
+
+}
+
+func (in *Operator) retryJoinString() string {
+	var retryJoinString []string
+	for i := int32(0); i < in.Spec.Server.Replicas; i++ {
+		retryJoinString = append(retryJoinString, fmt.Sprintf("-retry-join=%s-server-%d.%s-server.%s.svc", in.Name, i, in.Name, in.Namespace))
+	}
+	return strings.Join(retryJoinString, `\ \n`)
+}
+
+func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
+	tenSeconds := int64(10)
+	return &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      in.Name,
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":       in.Name,
+					"release":   in.Name,
+					"component": "client",
+					"hasDNS":    "true",
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":       in.Name,
+						"release":   in.Name,
+						"component": "client",
+						"hasDNS":    "true",
+					},
+					Annotations: map[string]string{
+						"consul.hashicorp.com/connect-inject": "false",
+					},
+				},
+				Spec: corev1.PodSpec{
+					TerminationGracePeriodSeconds: &tenSeconds,
+					ServiceAccountName:            fmt.Sprintf("%s-client", in.Name),
+					Volumes: []corev1.Volume{
+						{
+							Name: "data",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+						{
+							Name: "config",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: fmt.Sprintf("%s-client-config", in.Name),
+									},
+								},
+							},
+						},
+					},
+					Containers: []corev1.Container{
+						{
+							Name:  "consul",
+							Image: in.Spec.Global.ConsulImage,
+							Env: []corev1.EnvVar{
+								{
+									Name: "ADVERTISE_IP",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "status.hostIP",
+										},
+									},
+								},
+								{
+									Name: "NAMESPACE",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+								{
+									Name: "NODE",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "spec.nodeName",
+										},
+									},
+								},
+								{
+									Name:  "HOST_IP",
+									Value: "",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "status.hostIP",
+										},
+									},
+								},
+							},
+							Command: []string{
+								"/bin/sh",
+								"-ec",
+								fmt.Sprintf(`exec /bin/consul agent \
+										-node="${NODE}" \
+										-advertise="${ADVERTISE_IP}" \
+										-bind=0.0.0.0 \
+										-client=0.0.0.0 \
+										-node-meta=pod-name:${HOSTNAME} \
+										-hcl='leave_on_terminate = true' \
+										-hcl='ports { grpc = 8502 }' \
+										-config-dir=/consul/config \
+										-datacenter=%s \
+										-data-dir=/consul/data \
+										%s \
+										-domain=%s`, in.Spec.Global.Datacenter, in.retryJoinString(), in.Spec.Global.Domain),
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "data",
+									MountPath: "/consul/data",
+								},
+							},
+							Ports: []corev1.ContainerPort{
+								{ // TODO: to support TLS we need to remove this port and add 8501
+									Name:          "http",
+									HostPort:      8500,
+									ContainerPort: 8500,
+								},
+								{
+									Name:          "grpc",
+									HostPort:      8502,
+									ContainerPort: 8502,
+								},
+								{
+									Name:          "serflan-tcp",
+									ContainerPort: 8301,
+									Protocol:      corev1.ProtocolTCP,
+								},
+								{
+									Name:          "serflan-udp",
+									ContainerPort: 8301,
+									Protocol:      corev1.ProtocolUDP,
+								},
+								{
+									Name:          "serfwan",
+									ContainerPort: 8302,
+								},
+								{
+									Name:          "server",
+									ContainerPort: 8300,
+								},
+								{
+									Name:          "dns-tcp",
+									ContainerPort: 8600,
+									Protocol:      corev1.ProtocolTCP,
+								},
+								{
+									Name:          "dns-udp",
+									ContainerPort: 8600,
+									Protocol:      corev1.ProtocolUDP,
+								},
+							},
+							ReadinessProbe: &corev1.Probe{
+								// TODO: this can be stubbed w/ server
+								Handler: corev1.Handler{
+									Exec: &corev1.ExecAction{
+										Command: []string{
+											"/bin/sh",
+											"-ec",
+											`curl http://127.0.0.1:8500/admissionv1/status/leader \
+2>/dev/null | grep -E '".+"'`,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (in *Operator) ConnectServiceAccount() *corev1.ServiceAccount {
+	return &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-connect-injector-webhook-svc-account", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		ImagePullSecrets: in.imagePullSecretsList(),
+	}
+}
+
+func (in *Operator) ConnectClusterRole() *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-connect-injector-webhook", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				// TODO find the const for all these
+				APIGroups: []string{"admissionregistration.k8s.io"},
+				Resources: []string{"mutatingwebhookconfigurations"},
+				Verbs: []string{
+					"get",
+					"list",
+					"watch",
+					"patch",
+				},
+			},
+			/*			// TODO: Uncomment for health checks!
+						{
+							APIGroups:       []string{""},
+							Resources:       []string{"pods"},
+							Verbs:           []string{
+								"get",
+								"list",
+								"watch",
+							},
+						},
+			*/
+
+		},
+	}
+}
+
+func (in *Operator) ClientClusterRoleBinding() *rbacv1.ClusterRoleBinding {
+	return &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-connect-injector-webhook-admin-role-binding", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     fmt.Sprintf("%s-connect-injector-webhook", in.Name),
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind: rbacv1.ServiceAccountKind,
+				Name: fmt.Sprintf("%s-connect-injector-webhook-svc-account", in.Name),
+			},
+		},
+	}
+
+}
+
+func (in *Operator) ConnectService() *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-connect-injector-svc", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{
+					Port: 443,
+					TargetPort: intstr.IntOrString{
+						Type:   intstr.Int,
+						IntVal: 8080,
+					},
+				},
+			},
+			Selector: map[string]string{
+				"app":       in.Name,
+				"release":   in.Name,
+				"component": "connect-injector",
+			},
+		},
+	}
+}
+
+func (in *Operator) ConnectDeployment() *appsv1.Deployment {
+	oneReplica := int32(1)
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      in.Name,
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &oneReplica,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":       in.Name,
+					"release":   in.Name,
+					"component": "connect-injector",
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":       in.Name,
+						"release":   in.Name,
+						"component": "connect-injector",
+					},
+					Annotations: map[string]string{
+						"consul.hashicorp.com/connect-inject": "false",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "sidecar-injector",
+							Image: in.Spec.Global.ConsulK8sImage,
+							Env: []corev1.EnvVar{
+								{
+									Name: "NAMESPACE",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+								{
+									Name: "CONSUL_HTTP_ADDR",
+									// TODO: TLS
+									Value: "http://${HOST_IP}:8500",
+								},
+							},
+							Command: []string{
+								"/bin/sh",
+								"-ec",
+								fmt.Sprintf(`exec consul-k8s inject-connect \
+                -default-inject=false \
+                -consul-image="%s" \
+                -envoy-image="%s" \
+                -consul-k8s-image="%s" \
+                -listen=:8080 \
+				-log-level=info \
+				-enable-health-checks-controller=%t \
+				-health-checks-reconcile-period="1m" \
+				-enable-central-config=true \
+				-consul-destination-namespace=default \
+                -tls-auto=%s-connect-injector-cfg \
+                -tls-auto-hosts=%s-connect-injector-svc,%s-connect-injector-svc.%s,%s-connect-injector-svc.%s.svc \`,
+									in.Spec.Global.ConsulImage, in.Spec.Global.EnvoyImage,
+									in.Spec.Global.ConsulK8sImage, in.Spec.Connect.HealthChecks,
+									in.Name, in.Name, in.Name, in.Namespace, in.Name, in.Namespace),
+							},
+							LivenessProbe: &corev1.Probe{
+								Handler: corev1.Handler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/health/ready",
+										Port: intstr.IntOrString{
+											Type:   intstr.Int,
+											IntVal: 8080,
+										},
+										Scheme: corev1.URISchemeHTTPS,
+									},
+								},
+								FailureThreshold:    2,
+								InitialDelaySeconds: 1,
+								PeriodSeconds:       2,
+								SuccessThreshold:    1,
+								TimeoutSeconds:      5,
+							},
+							ReadinessProbe: &corev1.Probe{
+								Handler: corev1.Handler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/health/ready",
+										Port: intstr.IntOrString{
+											Type:   intstr.Int,
+											IntVal: 8080,
+										},
+										Scheme: corev1.URISchemeHTTPS,
+									},
+								},
+								FailureThreshold:    2,
+								InitialDelaySeconds: 1,
+								PeriodSeconds:       2,
+								SuccessThreshold:    1,
+								TimeoutSeconds:      5,
+							},
+							Ports:           nil,
+							VolumeDevices:   nil,
+							StartupProbe:    nil,
+							Lifecycle:       nil,
+							ImagePullPolicy: "",
+							SecurityContext: nil,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (in *Operator) ConnectWebhook() *admissionv1.MutatingWebhookConfiguration {
+	failurePolicy := admissionv1.Ignore
+	sideEffects := admissionv1.SideEffectClassNone
+	webhookPath := "/mutate"
+	return &admissionv1.MutatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-connect-injector-cfg", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		Webhooks: []admissionv1.MutatingWebhook{
+			{
+				Name:          fmt.Sprintf("%s-connect-injector.consul.hashicorp.com", in.Name),
+				FailurePolicy: &failurePolicy,
+				SideEffects:   &sideEffects,
+				ClientConfig: admissionv1.WebhookClientConfig{
+					Service: &admissionv1.ServiceReference{
+						Namespace: in.Namespace,
+						Name:      fmt.Sprintf("%s-connect-injector-svc", in.Name),
+						Path:      &webhookPath,
+					},
+					CABundle: []byte(""),
+				},
+				Rules: []admissionv1.RuleWithOperations{
+					{
+						Operations: []admissionv1.OperationType{admissionv1.Create},
+						Rule: admissionv1.Rule{
+							APIGroups:   []string{""},
+							APIVersions: []string{"v1"},
+							Resources:   []string{"pods"},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (in *Operator) uiServiceType() corev1.ServiceType {
+	switch in.Spec.UI.Type {
+	case "LoadBalancer":
+		return corev1.ServiceTypeLoadBalancer
+	case "ClusterIP":
+		return corev1.ServiceTypeClusterIP
+	case "NodePort":
+		return corev1.ServiceTypeNodePort
+	default:
+		return corev1.ServiceTypeExternalName
 	}
 }
 

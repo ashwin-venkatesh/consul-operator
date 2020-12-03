@@ -37,6 +37,13 @@ spec:
                   enabled:
                     type: boolean
                 type: object
+              connect:
+                properties:
+                  enabled:
+                    type: boolean
+                  health:
+                    type: boolean
+                type: object
               global:
                 properties:
                   consulImage:
@@ -63,6 +70,13 @@ spec:
                   replicas:
                     format: int32
                     type: integer
+                type: object
+              ui:
+                properties:
+                  enabled:
+                    type: boolean
+                  type:
+                    type: string
                 type: object
             type: object
           status:
