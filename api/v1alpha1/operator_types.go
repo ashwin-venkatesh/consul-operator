@@ -2,9 +2,9 @@ package v1alpha1
 
 import (
 	"fmt"
-	v1 "k8s.io/api/admissionregistration/v1"
 	"strings"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -73,14 +73,6 @@ type Operator struct {
 	Status OperatorStatus `json:"status,omitempty"`
 }
 
-func (in *Operator) retryJoinString() string {
-	var retryJoinString []string
-	for i := int32(0); i < in.Spec.Server.Replicas; i++ {
-		retryJoinString = append(retryJoinString, fmt.Sprintf("-retry-join=%s-server-%d.%s-server.%s.svc", in.Name, i, in.Name, in.Namespace))
-	}
-	return strings.Join(retryJoinString, `\ \n`)
-}
-
 func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -129,7 +121,7 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 							VolumeSource: corev1.VolumeSource{
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
-										Name: "consul-server",
+										Name: fmt.Sprintf("%s-server-config", in.Name),
 									},
 								},
 							},
@@ -226,7 +218,7 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 											"/bin/sh",
 											"-ec",
 											`|
-curl http://127.0.0.1:8500/v1/status/leader \
+curl http://127.0.0.1:8500/admissionv1/status/leader \
 2>/dev/null | grep -E '".+"'`,
 										},
 									},
@@ -514,7 +506,7 @@ func (in *Operator) UIService() *corev1.Service {
 					},
 				},
 			},
-			Type: corev1.ServiceTypeLoadBalancer,
+			Type: in.uiServiceType(),
 		},
 	}
 }
@@ -616,6 +608,14 @@ func (in *Operator) ClientConfigMap() *corev1.ConfigMap {
 
 }
 
+func (in *Operator) retryJoinString() string {
+	var retryJoinString []string
+	for i := int32(0); i < in.Spec.Server.Replicas; i++ {
+		retryJoinString = append(retryJoinString, fmt.Sprintf("-retry-join=%s-server-%d.%s-server.%s.svc", in.Name, i, in.Name, in.Namespace))
+	}
+	return strings.Join(retryJoinString, `\ \n`)
+}
+
 func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 	tenSeconds := int64(10)
 	return &appsv1.DaemonSet{
@@ -653,11 +653,7 @@ func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 					},
 					Annotations: map[string]string{
 						"consul.hashicorp.com/connect-inject": "false",
-						// TODO: FIX THIS
-						"consul.hashicorp.com/config-checksum": "TODO: FIXME",
 					},
-					// TODO: is this needed?
-					OwnerReferences: nil,
 				},
 				Spec: corev1.PodSpec{
 					TerminationGracePeriodSeconds: &tenSeconds,
@@ -666,8 +662,7 @@ func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 						{
 							Name: "data",
 							VolumeSource: corev1.VolumeSource{
-								// TODO: is there a required entry here?
-								EmptyDir: nil,
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
 						},
 						{
@@ -790,8 +785,7 @@ func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 										Command: []string{
 											"/bin/sh",
 											"-ec",
-											`|
-curl http://127.0.0.1:8500/v1/status/leader \
+											`curl http://127.0.0.1:8500/admissionv1/status/leader \
 2>/dev/null | grep -E '".+"'`,
 										},
 									},
@@ -1001,14 +995,21 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 								"/bin/sh",
 								"-ec",
 								fmt.Sprintf(`exec consul-k8s inject-connect \
-                -default-inject={{ .Values.connectInject.default }} \
+                -default-inject=false \
                 -consul-image="%s" \
                 -envoy-image="%s" \
                 -consul-k8s-image="%s" \
-				// TODO: not clear if k8sAllow/DenyNamespaces is necessary
-                -listen=:8080`,
+                -listen=:8080 \
+				-log-level=info \
+				-enable-health-checks-controller=%t \
+				-health-checks-reconcile-period="1m" \
+				-enable-central-config=true \
+				-consul-destination-namespace=default \
+                -tls-auto=%s-connect-injector-cfg \
+                -tls-auto-hosts=%s-connect-injector-svc,%s-connect-injector-svc.%s,%s-connect-injector-svc.%s.svc \`,
 									in.Spec.Global.ConsulImage, in.Spec.Global.EnvoyImage,
-									in.Spec.Global.ConsulK8sImage),
+									in.Spec.Global.ConsulK8sImage, in.Spec.Connect.HealthChecks,
+									in.Name, in.Name, in.Name, in.Namespace, in.Name, in.Namespace),
 							},
 							LivenessProbe: &corev1.Probe{
 								Handler: corev1.Handler{
@@ -1018,8 +1019,7 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 											Type:   intstr.Int,
 											IntVal: 8080,
 										},
-										// TODO: can we make this a const?
-										Scheme: "HTTPS",
+										Scheme: corev1.URISchemeHTTPS,
 									},
 								},
 								FailureThreshold:    2,
@@ -1036,8 +1036,7 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 											Type:   intstr.Int,
 											IntVal: 8080,
 										},
-										// TODO: can we make this a const?
-										Scheme: "HTTPS",
+										Scheme: corev1.URISchemeHTTPS,
 									},
 								},
 								FailureThreshold:    2,
@@ -1060,47 +1059,65 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 	}
 }
 
-func (in *Operator) ConnectWebhook() *v1.MutatingWebhookConfiguration {
-	// TODO: ========== this is where i left off bc tired ==========
-	return &v1.MutatingWebhookConfiguration{}
-	/*
-		return &v1.MutatingWebhookConfiguration{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("%s-connect-injector-cfg", in.Name),
-				Namespace: in.Namespace,
-				Labels: map[string]string{
-					"app":     in.Name,
-					"release": in.Name,
-				},
-				OwnerReferences: []metav1.OwnerReference{
-					*metav1.NewControllerRef(in, schema.GroupVersionKind{
-						Group:   "consul.hashicorp.com",
-						Version: "v1alpha1",
-						Kind:    "Operator",
-					}),
-				},
+func (in *Operator) ConnectWebhook() *admissionv1.MutatingWebhookConfiguration {
+	failurePolicy := admissionv1.Ignore
+	sideEffects := admissionv1.SideEffectClassNone
+	webhookPath := "/mutate"
+	return &admissionv1.MutatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-connect-injector-cfg", in.Name),
+			Namespace: in.Namespace,
+			Labels: map[string]string{
+				"app":     in.Name,
+				"release": in.Name,
 			},
-			Webhooks: []v1.MutatingWebhook{
-				{
-					Name:          fmt.Sprintf("%s-connect-injector.consul.hashicorp.com", in.Name),
-					FailurePolicy: &v1.Ignore,
-					SideEffects:   &v1.SideEffectClassNone,
-					ClientConfig: v1.WebhookClientConfig{
-						Service: v1.ServiceReference{
-							Namespace: in.Namespace,
-							Name:      fmt.Sprintf("%s-connect-injector-svc"),
-							Path:      "/mutate",
-						},
-						// TOOD: huuuuh?
-						CABundle: []byte(""),
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(in, schema.GroupVersionKind{
+					Group:   "consul.hashicorp.com",
+					Version: "v1alpha1",
+					Kind:    "Operator",
+				}),
+			},
+		},
+		Webhooks: []admissionv1.MutatingWebhook{
+			{
+				Name:          fmt.Sprintf("%s-connect-injector.consul.hashicorp.com", in.Name),
+				FailurePolicy: &failurePolicy,
+				SideEffects:   &sideEffects,
+				ClientConfig: admissionv1.WebhookClientConfig{
+					Service: &admissionv1.ServiceReference{
+						Namespace: in.Namespace,
+						Name:      fmt.Sprintf("%s-connect-injector-svc", in.Name),
+						Path:      &webhookPath,
 					},
-					Rules:             nil,
-					NamespaceSelector: nil,
+					CABundle: []byte(""),
+				},
+				Rules: []admissionv1.RuleWithOperations{
+					{
+						Operations: []admissionv1.OperationType{admissionv1.Create},
+						Rule: admissionv1.Rule{
+							APIGroups:   []string{""},
+							APIVersions: []string{"v1"},
+							Resources:   []string{"pods"},
+						},
+					},
 				},
 			},
-		}
+		},
+	}
+}
 
-	*/
+func (in *Operator) uiServiceType() corev1.ServiceType {
+	switch in.Spec.UI.Type {
+	case "LoadBalancer":
+		return corev1.ServiceTypeLoadBalancer
+	case "ClusterIP":
+		return corev1.ServiceTypeClusterIP
+	case "NodePort":
+		return corev1.ServiceTypeNodePort
+	default:
+		return corev1.ServiceTypeExternalName
+	}
 }
 
 // +kubebuilder:object:root=true

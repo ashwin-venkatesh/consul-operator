@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -160,7 +161,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 	}
-	if operator.Spec.UI.Enabled {
+	if operator.Spec.UI.Enabled || operator.Spec.Global.Enabled {
 		// UI Service
 		uiService := &corev1.Service{}
 		err = r.Get(ctx, types.NamespacedName{
@@ -183,7 +184,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	// Connect Inject Webhook
-	if operator.Spec.Connect.Enabled {
+	if operator.Spec.Connect.Enabled || operator.Spec.Global.Enabled {
 		// Connect Service Account
 		connectServiceAccount := &corev1.ServiceAccount{}
 		err = r.Get(ctx, types.NamespacedName{
@@ -193,11 +194,11 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		if err != nil && errors.IsNotFound(err) {
 			connectServiceAccount = operator.ConnectServiceAccount()
 			if err := r.Create(ctx, connectServiceAccount); err != nil {
-				log.Error(err, "failed creating connecct serviceaccount")
+				log.Error(err, "failed creating connect serviceaccount")
 				return ctrl.Result{}, err
 			}
 		} else if err != nil {
-			log.Error(err, "failed getting connecct serviceaccount")
+			log.Error(err, "failed getting connect serviceaccount")
 			return ctrl.Result{}, err
 		} else {
 			return ctrl.Result{}, nil
