@@ -3,8 +3,8 @@ package controllers
 import (
 	"context"
 	"fmt"
-
 	"github.com/go-logr/logr"
+	v1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -38,7 +38,9 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, err
 	}
 
+	// Server Configuration
 	if operator.Spec.Global.Enabled || operator.Spec.Server.Enabled {
+		// Server Service Account
 		serverServiceAccount := &corev1.ServiceAccount{}
 		err = r.Get(ctx, types.NamespacedName{
 			Namespace: operator.Namespace,
@@ -58,6 +60,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 
+		// Server Role
 		serverRole := &rbacv1.Role{}
 		err := r.Get(ctx, types.NamespacedName{
 			Namespace: operator.Namespace,
@@ -77,6 +80,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 
+		// Server RoleBinding
 		serverRoleBinding := &rbacv1.RoleBinding{}
 		err = r.Get(ctx, types.NamespacedName{
 			Namespace: operator.Namespace,
@@ -96,10 +100,11 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 
+		// Server ConfigMap
 		serverConfigMap := &corev1.ConfigMap{}
 		err = r.Get(ctx, types.NamespacedName{
 			Namespace: operator.Namespace,
-			Name:      fmt.Sprintf("%s-server", operator.Name),
+			Name:      fmt.Sprintf("%s-server-config", operator.Name),
 		}, serverConfigMap)
 
 		if err != nil && errors.IsNotFound(err) {
@@ -115,6 +120,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 
+		// Server Service
 		serverService := &corev1.Service{}
 		err = r.Get(ctx, types.NamespacedName{
 			Namespace: operator.Namespace,
@@ -134,6 +140,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 
+		// Server StatefulSet
 		serverStatefulSet := &appsv1.StatefulSet{}
 		err = r.Get(ctx, types.NamespacedName{
 			Namespace: operator.Namespace,
@@ -153,24 +160,250 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 	}
+	if operator.Spec.UI.Enabled {
+		// UI Service
+		uiService := &corev1.Service{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-ui", operator.Name),
+		}, uiService)
 
-	uiService := &corev1.Service{}
-	err = r.Get(ctx, types.NamespacedName{
-		Namespace: operator.Namespace,
-		Name:      fmt.Sprintf("%s-ui", operator.Name),
-	}, uiService)
-
-	if err != nil && errors.IsNotFound(err) {
-		uiService = operator.UIService()
-		if err := r.Create(ctx, uiService); err != nil {
-			log.Error(err, "failed creating ui service")
+		if err != nil && errors.IsNotFound(err) {
+			uiService = operator.UIService()
+			if err := r.Create(ctx, uiService); err != nil {
+				log.Error(err, "failed creating ui service")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting ui service")
 			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
 		}
-	} else if err != nil {
-		log.Error(err, "failed getting ui service")
-		return ctrl.Result{}, err
-	} else {
-		return ctrl.Result{}, nil
+	}
+
+	// Connect Inject Webhook
+	if operator.Spec.Connect.Enabled {
+		// Connect Service Account
+		connectServiceAccount := &corev1.ServiceAccount{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-connect-injector-webhook-svc-account", operator.Name),
+		}, connectServiceAccount)
+		if err != nil && errors.IsNotFound(err) {
+			connectServiceAccount = operator.ConnectServiceAccount()
+			if err := r.Create(ctx, connectServiceAccount); err != nil {
+				log.Error(err, "failed creating connecct serviceaccount")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting connecct serviceaccount")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Connect ClusterRole
+		connectClusterRole := &rbacv1.ClusterRole{}
+		err := r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-connect-injector-webhook", operator.Name),
+		}, connectClusterRole)
+
+		if err != nil && errors.IsNotFound(err) {
+			connectClusterRole = operator.ConnectClusterRole()
+			if err := r.Create(ctx, connectClusterRole); err != nil {
+				log.Error(err, "failed creating connect cluster role")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting connect cluster role")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Connect ClusterRolebinding
+		clientClusterRoleBinding := &rbacv1.ClusterRoleBinding{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-connect-injector-webhook-admin-role-binding", operator.Name),
+		}, clientClusterRoleBinding)
+
+		if err != nil && errors.IsNotFound(err) {
+			clientClusterRoleBinding = operator.ClientClusterRoleBinding()
+			if err := r.Create(ctx, clientClusterRoleBinding); err != nil {
+				log.Error(err, "failed creating client clusterrolebinding")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting client clusterrolebinding")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Connect Service
+		connectService := &corev1.Service{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-connect-injector-svc", operator.Name),
+		}, connectService)
+
+		if err != nil && errors.IsNotFound(err) {
+			connectService = operator.ConnectService()
+			if err := r.Create(ctx, connectService); err != nil {
+				log.Error(err, "failed creating connect service")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting connect service")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Connect Webhook
+		connectWebhook := &v1.MutatingWebhookConfiguration{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-connect-injector-webhook-deployment", operator.Name),
+		}, connectWebhook)
+		if err != nil && errors.IsNotFound(err) {
+			connectWebhook = operator.ConnectWebhook()
+			if err := r.Create(ctx, connectWebhook); err != nil {
+				log.Error(err, "failed creating connect webhook")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting connect webhook")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Connect Deployment
+		connectDeployment := &appsv1.Deployment{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-connect-injector-webhook-deployment", operator.Name),
+		}, connectDeployment)
+
+		if err != nil && errors.IsNotFound(err) {
+			connectDeployment = operator.ConnectDeployment()
+			if err := r.Create(ctx, connectDeployment); err != nil {
+				log.Error(err, "failed creating connect deployment")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting connect deployment")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+	}
+
+	// Client Configuration
+	if operator.Spec.Client.Enabled {
+		// Client Service Account
+		clientServiceAccount := &corev1.ServiceAccount{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-client", operator.Name),
+		}, clientServiceAccount)
+
+		if err != nil && errors.IsNotFound(err) {
+			clientServiceAccount = operator.ClientServiceAccount()
+			if err := r.Create(ctx, clientServiceAccount); err != nil {
+				log.Error(err, "failed creating client serviceaccount")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting client serviceaccount")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Client Role
+		clientRole := &rbacv1.Role{}
+		err := r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-client", operator.Name),
+		}, clientRole)
+
+		if err != nil && errors.IsNotFound(err) {
+			clientRole = operator.ClientRole()
+			if err := r.Create(ctx, clientRole); err != nil {
+				log.Error(err, "failed creating client role")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting client role")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Client Role Binding
+		clientRoleBinding := &rbacv1.RoleBinding{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-client", operator.Name),
+		}, clientRoleBinding)
+
+		if err != nil && errors.IsNotFound(err) {
+			clientRoleBinding = operator.ClientRoleBinding()
+			if err := r.Create(ctx, clientRoleBinding); err != nil {
+				log.Error(err, "failed creating client rolebinding")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting client rolebinding")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Client ConfigMap
+		clientConfigMap := &corev1.ConfigMap{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s-client-config", operator.Name),
+		}, clientConfigMap)
+
+		if err != nil && errors.IsNotFound(err) {
+			clientConfigMap = operator.ClientConfigMap()
+			if err := r.Create(ctx, clientConfigMap); err != nil {
+				log.Error(err, "failed creating client configmap")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting client configmap")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
+
+		// Client Daemonset
+		clientDaemonset := &appsv1.DaemonSet{}
+		err = r.Get(ctx, types.NamespacedName{
+			Namespace: operator.Namespace,
+			Name:      fmt.Sprintf("%s", operator.Name),
+		}, clientDaemonset)
+		if err != nil && errors.IsNotFound(err) {
+			clientDaemonset = operator.ClientDaemonSet()
+			if err := r.Create(ctx, clientDaemonset); err != nil {
+				log.Error(err, "failed creating client daemonset")
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "failed getting client daemonset")
+			return ctrl.Result{}, err
+		} else {
+			return ctrl.Result{}, nil
+		}
 	}
 
 	return ctrl.Result{}, nil
