@@ -92,7 +92,9 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 			},
 		},
 		Spec: appsv1.StatefulSetSpec{
-			Replicas: &in.Spec.Server.Replicas,
+			ServiceName:         fmt.Sprintf("%s-server", in.Name),
+			PodManagementPolicy: appsv1.ParallelPodManagement,
+			Replicas:            &in.Spec.Server.Replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"app":       in.Name,
@@ -114,7 +116,7 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 					},
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "consul-server",
+					ServiceAccountName: fmt.Sprintf("%s-server", in.Name),
 					Volumes: []corev1.Volume{
 						{
 							Name: "config",
@@ -189,6 +191,10 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 							},
 							Ports: []corev1.ContainerPort{
 								{
+									Name:          "http",
+									ContainerPort: 8500,
+								},
+								{
 									Name:          "serflan",
 									ContainerPort: 8301,
 								},
@@ -217,8 +223,7 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 										Command: []string{
 											"/bin/sh",
 											"-ec",
-											`|
-curl http://127.0.0.1:8500/admissionv1/status/leader \
+											`curl http://127.0.0.1:8500/v1/status/leader \
 2>/dev/null | grep -E '".+"'`,
 										},
 									},
@@ -475,7 +480,7 @@ func (in *Operator) ServerService() *corev1.Service {
 func (in *Operator) UIService() *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-server", in.Name),
+			Name:      fmt.Sprintf("%s-ui", in.Name),
 			Namespace: in.Namespace,
 			Labels: map[string]string{
 				"app":       in.Name,
@@ -611,9 +616,10 @@ func (in *Operator) ClientConfigMap() *corev1.ConfigMap {
 func (in *Operator) retryJoinString() string {
 	var retryJoinString []string
 	for i := int32(0); i < in.Spec.Server.Replicas; i++ {
-		retryJoinString = append(retryJoinString, fmt.Sprintf("-retry-join=%s-server-%d.%s-server.%s.svc", in.Name, i, in.Name, in.Namespace))
+		retryJoinString = append(retryJoinString, fmt.Sprintf("-retry-join=%s-server-%d.%s-server.%s.svc ", in.Name, i, in.Name, in.Namespace))
 	}
-	return strings.Join(retryJoinString, `\ \n`)
+
+	return strings.Join(retryJoinString, ``)
 }
 
 func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
@@ -685,7 +691,7 @@ func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 									Name: "ADVERTISE_IP",
 									ValueFrom: &corev1.EnvVarSource{
 										FieldRef: &corev1.ObjectFieldSelector{
-											FieldPath: "status.hostIP",
+											FieldPath: "status.podIP",
 										},
 									},
 								},
@@ -737,6 +743,10 @@ func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 									Name:      "data",
 									MountPath: "/consul/data",
 								},
+								{
+									Name:      "config",
+									MountPath: "/consul/config",
+								},
 							},
 							Ports: []corev1.ContainerPort{
 								{ // TODO: to support TLS we need to remove this port and add 8501
@@ -785,7 +795,7 @@ func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 										Command: []string{
 											"/bin/sh",
 											"-ec",
-											`curl http://127.0.0.1:8500/admissionv1/status/leader \
+											`curl http://127.0.0.1:8500/v1/status/leader \
 2>/dev/null | grep -E '".+"'`,
 										},
 									},
@@ -849,18 +859,15 @@ func (in *Operator) ConnectClusterRole() *rbacv1.ClusterRole {
 					"patch",
 				},
 			},
-			/*			// TODO: Uncomment for health checks!
-						{
-							APIGroups:       []string{""},
-							Resources:       []string{"pods"},
-							Verbs:           []string{
-								"get",
-								"list",
-								"watch",
-							},
-						},
-			*/
-
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs: []string{
+					"get",
+					"list",
+					"watch",
+				},
+			},
 		},
 	}
 }
@@ -868,8 +875,7 @@ func (in *Operator) ConnectClusterRole() *rbacv1.ClusterRole {
 func (in *Operator) ClientClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 	return &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-connect-injector-webhook-admin-role-binding", in.Name),
-			Namespace: in.Namespace,
+			Name: fmt.Sprintf("%s-connect-injector-webhook-admin-role-binding", in.Name),
 			Labels: map[string]string{
 				"app":     in.Name,
 				"release": in.Name,
@@ -889,8 +895,9 @@ func (in *Operator) ClientClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 		},
 		Subjects: []rbacv1.Subject{
 			{
-				Kind: rbacv1.ServiceAccountKind,
-				Name: fmt.Sprintf("%s-connect-injector-webhook-svc-account", in.Name),
+				Namespace: in.Namespace,
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      fmt.Sprintf("%s-connect-injector-webhook-svc-account", in.Name),
 			},
 		},
 	}
@@ -972,6 +979,7 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 					},
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: fmt.Sprintf("%s-connect-injector-webhook-svc-account", in.Name),
 					Containers: []corev1.Container{
 						{
 							Name:  "sidecar-injector",
@@ -988,7 +996,15 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 								{
 									Name: "CONSUL_HTTP_ADDR",
 									// TODO: TLS
-									Value: "http://${HOST_IP}:8500",
+									Value: "http://$(HOST_IP):8500",
+								},
+								{
+									Name: "HOST_IP",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "status.hostIP",
+										},
+									},
 								},
 							},
 							Command: []string{
@@ -1002,11 +1018,12 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
                 -listen=:8080 \
 				-log-level=info \
 				-enable-health-checks-controller=%t \
-				-health-checks-reconcile-period="1m" \
+				-health-checks-reconcile-period=1m \
 				-enable-central-config=true \
+		        -allow-k8s-namespace="*" \
 				-consul-destination-namespace=default \
                 -tls-auto=%s-connect-injector-cfg \
-                -tls-auto-hosts=%s-connect-injector-svc,%s-connect-injector-svc.%s,%s-connect-injector-svc.%s.svc \`,
+                -tls-auto-hosts=%s-connect-injector-svc,%s-connect-injector-svc.%s,%s-connect-injector-svc.%s.svc`,
 									in.Spec.Global.ConsulImage, in.Spec.Global.EnvoyImage,
 									in.Spec.Global.ConsulK8sImage, in.Spec.Connect.HealthChecks,
 									in.Name, in.Name, in.Name, in.Namespace, in.Name, in.Namespace),
@@ -1081,9 +1098,7 @@ func (in *Operator) ConnectWebhook() *admissionv1.MutatingWebhookConfiguration {
 		},
 		Webhooks: []admissionv1.MutatingWebhook{
 			{
-				Name:          fmt.Sprintf("%s-connect-injector.consul.hashicorp.com", in.Name),
-				FailurePolicy: &failurePolicy,
-				SideEffects:   &sideEffects,
+				Name: fmt.Sprintf("%s-connect-injector.consul.hashicorp.com", in.Name),
 				ClientConfig: admissionv1.WebhookClientConfig{
 					Service: &admissionv1.ServiceReference{
 						Namespace: in.Namespace,
@@ -1102,6 +1117,9 @@ func (in *Operator) ConnectWebhook() *admissionv1.MutatingWebhookConfiguration {
 						},
 					},
 				},
+				FailurePolicy:           &failurePolicy,
+				SideEffects:             &sideEffects,
+				AdmissionReviewVersions: []string{"v1beta1", "v1"},
 			},
 		},
 	}

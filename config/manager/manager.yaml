@@ -27,7 +27,7 @@ spec:
         - /manager
         args:
         - --enable-leader-election
-        image: ashwinvenkatesh/consul-operator
+        image: kschoche/consul-operator
         name: manager
         resources:
           limits:

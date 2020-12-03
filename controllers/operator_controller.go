@@ -58,7 +58,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting server serviceaccount")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Server Role
@@ -78,7 +78,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting server role")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Server RoleBinding
@@ -98,7 +98,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting server rolebinding")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Server ConfigMap
@@ -118,7 +118,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting server configmap")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Server Service
@@ -138,7 +138,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting server service")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Server StatefulSet
@@ -158,7 +158,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting server statefulset")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 	}
 	if operator.Spec.UI.Enabled || operator.Spec.Global.Enabled {
@@ -179,7 +179,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting ui service")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 	}
 
@@ -201,14 +201,14 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting connect serviceaccount")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Connect ClusterRole
 		connectClusterRole := &rbacv1.ClusterRole{}
 		err := r.Get(ctx, types.NamespacedName{
-			Namespace: operator.Namespace,
-			Name:      fmt.Sprintf("%s-connect-injector-webhook", operator.Name),
+			//Namespace: operator.Namespace,
+			Name: fmt.Sprintf("%s-connect-injector-webhook", operator.Name),
 		}, connectClusterRole)
 
 		if err != nil && errors.IsNotFound(err) {
@@ -221,14 +221,14 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting connect cluster role")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Connect ClusterRolebinding
 		clientClusterRoleBinding := &rbacv1.ClusterRoleBinding{}
 		err = r.Get(ctx, types.NamespacedName{
-			Namespace: operator.Namespace,
-			Name:      fmt.Sprintf("%s-connect-injector-webhook-admin-role-binding", operator.Name),
+			//Namespace: operator.Namespace,
+			Name: fmt.Sprintf("%s-connect-injector-webhook-admin-role-binding", operator.Name),
 		}, clientClusterRoleBinding)
 
 		if err != nil && errors.IsNotFound(err) {
@@ -241,7 +241,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting client clusterrolebinding")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Connect Service
@@ -261,14 +261,14 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting connect service")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Connect Webhook
 		connectWebhook := &v1.MutatingWebhookConfiguration{}
 		err = r.Get(ctx, types.NamespacedName{
-			Namespace: operator.Namespace,
-			Name:      fmt.Sprintf("%s-connect-injector-webhook-deployment", operator.Name),
+			//Namespace: operator.Namespace,
+			Name: fmt.Sprintf("%s-connect-injector-webhook-deployment", operator.Name),
 		}, connectWebhook)
 		if err != nil && errors.IsNotFound(err) {
 			connectWebhook = operator.ConnectWebhook()
@@ -280,7 +280,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting connect webhook")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Connect Deployment
@@ -300,13 +300,13 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting connect deployment")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 	}
 
 	// Client Configuration
-	if operator.Spec.Client.Enabled {
+	if operator.Spec.Client.Enabled || operator.Spec.Global.Enabled {
 		// Client Service Account
 		clientServiceAccount := &corev1.ServiceAccount{}
 		err = r.Get(ctx, types.NamespacedName{
@@ -324,7 +324,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting client serviceaccount")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Client Role
@@ -344,7 +344,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting client role")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Client Role Binding
@@ -364,7 +364,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting client rolebinding")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Client ConfigMap
@@ -384,7 +384,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting client configmap")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 
 		// Client Daemonset
@@ -403,7 +403,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting client daemonset")
 			return ctrl.Result{}, err
 		} else {
-			return ctrl.Result{}, nil
+			//return ctrl.Result{}, nil
 		}
 	}
 
