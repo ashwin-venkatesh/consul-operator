@@ -3,7 +3,9 @@ package controllers
 import (
 	"context"
 	"fmt"
+
 	"github.com/go-logr/logr"
+	"github.com/google/go-cmp/cmp"
 	v1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -157,7 +159,13 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting server statefulset")
 			return ctrl.Result{}, err
 		} else {
-			//return ctrl.Result{}, nil
+			expectedStatefulSet := operator.ServerStatefulSet()
+			if !cmp.Equal(expectedStatefulSet.Spec.Template.Spec.Containers[0].Command, serverStatefulSet.Spec.Template.Spec.Containers[0].Command) {
+				if err := r.Update(ctx, expectedStatefulSet); err != nil {
+					log.Error(err, "failed updating server statefulset")
+					return ctrl.Result{}, err
+				}
+			}
 		}
 	}
 	if operator.Spec.UI.Enabled || operator.Spec.Global.Enabled {
@@ -299,20 +307,13 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting connect deployment")
 			return ctrl.Result{}, err
 		} else {
-			// It already exists, this is an Update if they differ!
-			/*
-				// TODO: UNCOMMENT JUST FOR THE DEMO
-				cmd := connectDeployment.Spec.Template.Spec.Containers[0].Command[2]
-				if strings.Contains(cmd, "-enable-health-checks-controller=false") && operator.Spec.Connect.HealthChecks {
-					connectDeployment = operator.ConnectDeployment()
-					if err := r.Update(ctx, connectDeployment); err != nil {
-						log.Error(err, "failed creating connect deployment")
-						return ctrl.Result{}, err
-					}
+			expectedDeployment := operator.ConnectDeployment()
+			if !cmp.Equal(expectedDeployment.Spec.Template.Spec.Containers[0].Command, connectDeployment.Spec.Template.Spec.Containers[0].Command) {
+				if err := r.Update(ctx, expectedDeployment); err != nil {
+					log.Error(err, "failed updating connect deployment")
+					return ctrl.Result{}, err
 				}
-
-			*/
-			//return ctrl.Result{}, nil
+			}
 		}
 
 	}
@@ -415,7 +416,13 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting client daemonset")
 			return ctrl.Result{}, err
 		} else {
-			//return ctrl.Result{}, nil
+			expectedDaemonset := operator.ClientDaemonSet()
+			if !cmp.Equal(expectedDaemonset.Spec.Template.Spec.Containers[0].Command, clientDaemonset.Spec.Template.Spec.Containers[0].Command) {
+				if err := r.Update(ctx, expectedDaemonset); err != nil {
+					log.Error(err, "failed updating client daemonset")
+					return ctrl.Result{}, err
+				}
+			}
 		}
 	}
 

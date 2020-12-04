@@ -34,6 +34,7 @@ rules:
   - pods
   - serviceaccounts
   - services
+  - events
   verbs:
   - create
   - delete

@@ -151,23 +151,22 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 									},
 								},
 							},
-							Command: []string{
-								"/bin/sh",
-								"-ec",
-								fmt.Sprintf(`exec /bin/consul agent \
-										-advertise="${POD_IP}" \
-										-bind=0.0.0.0 \
-										-bootstrap-expect=%d \
-										-client=0.0.0.0 \
-										-config-dir=/consul/config \
-										-datacenter=%s \
-										-data-dir=/consul/data \
-										-domain=%s \
-										-hcl="connect { enabled = true }" \
-										-ui \
-										%s \
-										-server`, in.Spec.Server.Replicas, in.Spec.Global.Datacenter, in.Spec.Global.Domain, in.retryJoinString()),
-							},
+							Command: []string{"/bin/sh", "-ec", fmt.Sprintf(
+								`exec /bin/consul agent \
+-advertise="${POD_IP}" \
+-bind=0.0.0.0 \
+-bootstrap-expect=%d \
+-client=0.0.0.0 \
+-config-dir=/consul/config \
+-datacenter=%s \
+-data-dir=/consul/data \
+-domain=%s \
+-hcl="connect { enabled = true }" \
+-ui \
+%s \
+-server`,
+								in.Spec.Server.Replicas, in.Spec.Global.Datacenter, in.Spec.Global.Domain, in.retryJoinString(),
+							)},
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "config",
@@ -181,11 +180,7 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 							Lifecycle: &corev1.Lifecycle{
 								PreStop: &corev1.Handler{
 									Exec: &corev1.ExecAction{
-										Command: []string{
-											"/bin/sh",
-											"-c",
-											"consul leave",
-										},
+										Command: []string{"/bin/sh", "-c", "consul leave"},
 									},
 								},
 							},
@@ -220,12 +215,7 @@ func (in *Operator) ServerStatefulSet() *appsv1.StatefulSet {
 							ReadinessProbe: &corev1.Probe{
 								Handler: corev1.Handler{
 									Exec: &corev1.ExecAction{
-										Command: []string{
-											"/bin/sh",
-											"-ec",
-											`curl http://127.0.0.1:8500/v1/status/leader \
-2>/dev/null | grep -E '".+"'`,
-										},
+										Command: []string{"/bin/sh", "-ec", `curl http://127.0.0.1:8500/v1/status/leader 2>/dev/null | grep -E '".+"'`},
 									},
 								},
 								InitialDelaySeconds: 5,
@@ -721,23 +711,19 @@ func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 									},
 								},
 							},
-							Command: []string{
-								"/bin/sh",
-								"-ec",
-								fmt.Sprintf(`exec /bin/consul agent \
-										-node="${NODE}" \
-										-advertise="${ADVERTISE_IP}" \
-										-bind=0.0.0.0 \
-										-client=0.0.0.0 \
-										-node-meta=pod-name:${HOSTNAME} \
-										-hcl='leave_on_terminate = true' \
-										-hcl='ports { grpc = 8502 }' \
-										-config-dir=/consul/config \
-										-datacenter=%s \
-										-data-dir=/consul/data \
-										%s \
-										-domain=%s`, in.Spec.Global.Datacenter, in.retryJoinString(), in.Spec.Global.Domain),
-							},
+							Command: []string{"/bin/sh", "-ec", fmt.Sprintf(`exec /bin/consul agent \
+-node="${NODE}" \
+-advertise="${ADVERTISE_IP}" \
+-bind=0.0.0.0 \
+-client=0.0.0.0 \
+-node-meta=pod-name:${HOSTNAME} \
+-hcl='leave_on_terminate = true' \
+-hcl='ports { grpc = 8502 }' \
+-config-dir=/consul/config \
+-datacenter=%s \
+-data-dir=/consul/data \
+%s \
+-domain=%s`, in.Spec.Global.Datacenter, in.retryJoinString(), in.Spec.Global.Domain)},
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "data",
@@ -792,12 +778,7 @@ func (in *Operator) ClientDaemonSet() *appsv1.DaemonSet {
 								// TODO: this can be stubbed w/ server
 								Handler: corev1.Handler{
 									Exec: &corev1.ExecAction{
-										Command: []string{
-											"/bin/sh",
-											"-ec",
-											`curl http://127.0.0.1:8500/v1/status/leader \
-2>/dev/null | grep -E '".+"'`,
-										},
+										Command: []string{"/bin/sh", "-ec", `curl http://127.0.0.1:8500/v1/status/leader 2>/dev/null | grep -E '".+"'`},
 									},
 								},
 							},
@@ -994,8 +975,7 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 									},
 								},
 								{
-									Name: "CONSUL_HTTP_ADDR",
-									// TODO: TLS
+									Name:  "CONSUL_HTTP_ADDR",
 									Value: "http://$(HOST_IP):8500",
 								},
 								{
@@ -1007,27 +987,24 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 									},
 								},
 							},
-							Command: []string{
-								"/bin/sh",
-								"-ec",
-								fmt.Sprintf(`exec consul-k8s inject-connect \
-                -default-inject=false \
-                -consul-image="%s" \
-                -envoy-image="%s" \
-                -consul-k8s-image="%s" \
-                -listen=:8080 \
-				-log-level=info \
-				-enable-health-checks-controller=%t \
-				-health-checks-reconcile-period=1m \
-				-enable-central-config=true \
-		        -allow-k8s-namespace="*" \
-				-consul-destination-namespace=default \
-                -tls-auto=%s-connect-injector-cfg \
-                -tls-auto-hosts=%s-connect-injector-svc,%s-connect-injector-svc.%s,%s-connect-injector-svc.%s.svc`,
-									in.Spec.Global.ConsulImage, in.Spec.Global.EnvoyImage,
-									in.Spec.Global.ConsulK8sImage, in.Spec.Connect.HealthChecks,
-									in.Name, in.Name, in.Name, in.Namespace, in.Name, in.Namespace),
-							},
+							Command: []string{"/bin/sh", "-ec", fmt.Sprintf(
+								`exec consul-k8s inject-connect \
+-default-inject=false \
+-consul-image="%s" \
+-envoy-image="%s" \
+-consul-k8s-image="%s" \
+-listen=:8080 \
+-log-level=info \
+-enable-health-checks-controller=%t \
+-health-checks-reconcile-period=1m \
+-enable-central-config=true \
+-allow-k8s-namespace="*" \
+-consul-destination-namespace=default \
+-tls-auto=%s-connect-injector-cfg \
+-tls-auto-hosts=%s-connect-injector-svc,%s-connect-injector-svc.%s,%s-connect-injector-svc.%s.svc`,
+								in.Spec.Global.ConsulImage, in.Spec.Global.EnvoyImage, in.Spec.Global.ConsulK8sImage, in.Spec.Connect.HealthChecks,
+								in.Name, in.Name, in.Name, in.Namespace, in.Name, in.Namespace,
+							)},
 							LivenessProbe: &corev1.Probe{
 								Handler: corev1.Handler{
 									HTTPGet: &corev1.HTTPGetAction{
