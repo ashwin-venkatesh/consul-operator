@@ -3,7 +3,6 @@ package controllers
 import (
 	"context"
 	"fmt"
-
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -268,7 +267,7 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		connectWebhook := &v1.MutatingWebhookConfiguration{}
 		err = r.Get(ctx, types.NamespacedName{
 			//Namespace: operator.Namespace,
-			Name: fmt.Sprintf("%s-connect-injector-webhook-deployment", operator.Name),
+			Name: fmt.Sprintf("%s-connect-injector-cfg", operator.Name),
 		}, connectWebhook)
 		if err != nil && errors.IsNotFound(err) {
 			connectWebhook = operator.ConnectWebhook()
@@ -300,6 +299,19 @@ func (r *OperatorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			log.Error(err, "failed getting connect deployment")
 			return ctrl.Result{}, err
 		} else {
+			// It already exists, this is an Update if they differ!
+			/*
+				// TODO: UNCOMMENT JUST FOR THE DEMO
+				cmd := connectDeployment.Spec.Template.Spec.Containers[0].Command[2]
+				if strings.Contains(cmd, "-enable-health-checks-controller=false") && operator.Spec.Connect.HealthChecks {
+					connectDeployment = operator.ConnectDeployment()
+					if err := r.Update(ctx, connectDeployment); err != nil {
+						log.Error(err, "failed creating connect deployment")
+						return ctrl.Result{}, err
+					}
+				}
+
+			*/
 			//return ctrl.Result{}, nil
 		}
 

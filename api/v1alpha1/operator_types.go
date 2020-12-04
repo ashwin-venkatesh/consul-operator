@@ -944,7 +944,7 @@ func (in *Operator) ConnectDeployment() *appsv1.Deployment {
 	oneReplica := int32(1)
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      in.Name,
+			Name:      fmt.Sprintf("%s-connect-injector-webhook-deployment", in.Name),
 			Namespace: in.Namespace,
 			Labels: map[string]string{
 				"app":     in.Name,
